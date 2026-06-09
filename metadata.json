@@ -1,0 +1,6 @@
+{
+  "name": "BYOD Speaking Tutor",
+  "description": "2인용 독립 구동 영어 회화 빌더 및 Gemini Live 보이스 튜터 연동 프롬프트 산출기",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

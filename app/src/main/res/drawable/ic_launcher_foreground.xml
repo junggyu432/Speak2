@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Speech Bubble shadow/depth -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M 34,24 H 74 C 79.5,24 84,28.5 84,34 V 62 C 84,67.5 79.5,72 74,72 H 44 L 30,82 V 72 H 34 C 28.5,72 24,67.5 24,62 V 34 C 24,28.5 28.5,24 34,24 Z" />
+    <!-- Microphone Silhouette colored with secondary theme -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M 54,34 C 50.7,34 48,36.7 48,40 V 50 C 48,53.3 50.7,56 54,56 C 57.3,56 60,53.3 60,50 V 40 C 60,36.7 57.3,34 54,34 Z" />
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M 64,48 V 50 C 64,55.1 60.1,59.3 55,59.9 V 64 H 53 V 59.9 C 47.9,59.3 44,55.1 44,50 V 48 H 46 V 50 C 46,54.4 49.6,58 54,58 C 58.4,58 62,54.4 62,50 V 48 H 64 Z" />
+</vector>
