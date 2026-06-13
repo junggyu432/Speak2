@@ -21,6 +21,7 @@ data class Word(
     @ColumnInfo(name = "native_example_kr") val nativeExampleKr: String,
     val status: String = "PASSIVE", // 'PASSIVE' or 'ACTIVE'
     val profile: String = "ME", // "ME" or "GIRLFRIEND"
+    val category: String = "기초 필수",
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
 )
 

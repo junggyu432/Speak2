@@ -12,6 +12,12 @@ interface WordDao {
     @Query("SELECT * FROM words WHERE profile = :profile AND status = 'PASSIVE' ORDER BY id ASC LIMIT :limit")
     suspend fun getPassiveWords(profile: String, limit: Int): List<Word>
 
+    @Query("SELECT * FROM words WHERE profile = :profile AND status = 'PASSIVE' AND category = :category ORDER BY id ASC LIMIT :limit")
+    suspend fun getPassiveWordsByCategory(profile: String, category: String, limit: Int): List<Word>
+
+    @Query("SELECT DISTINCT category FROM words WHERE profile = :profile ORDER BY category ASC")
+    fun getDistinctCategoriesFlow(profile: String): Flow<List<String>>
+
     @Query("SELECT * FROM words WHERE profile = :profile AND status = 'ACTIVE' ORDER BY id DESC")
     fun getActiveWordsFlow(profile: String): Flow<List<Word>>
 
@@ -66,8 +72,9 @@ interface WordDao {
         SELECT w.target_english as targetEnglish, c.user_typed_sentence as userTypedSentence, c.created_at as createdAt
         FROM daily_chat_logs c
         INNER JOIN words w ON c.word_id = w.id
+        WHERE w.profile = :profile
     """)
-    suspend fun getAllChatLogsWithEnglish(): List<ChatLogWithEnglish>
+    suspend fun getAllChatLogsWithEnglish(profile: String): List<ChatLogWithEnglish>
 
     @Query("SELECT COUNT(*) FROM daily_chat_logs WHERE created_at >= :since")
     fun getTodayLogCountFlow(since: Long): Flow<Int>

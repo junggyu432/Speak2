@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -40,8 +41,28 @@ class BYODViewModel(
     private val context: Context
 ) : ViewModel() {
 
-    private val _currentProfile = MutableStateFlow("SHARED") // Changed to SHARED for unified couples database
+    private val _currentProfile = MutableStateFlow("SHARED")
     val currentProfile: StateFlow<String> = _currentProfile.asStateFlow()
+
+    // Course Category selection for Study / Quiz / Wordbook
+    var selectedCategoryForQuiz by mutableStateOf("전체 코스")
+
+    // Reactive categories list matching profile database content
+    val distinctCategories: StateFlow<List<String>> = _currentProfile
+        .flatMapLatest { profile -> repository.getDistinctCategoriesFlow(profile) }
+        .map { list -> listOf("전체 코스") + list.filter { it.isNotEmpty() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("전체 코스"))
+
+    // AI Research States
+    var researchTopicInput by mutableStateOf("")
+    var isResearching by mutableStateOf(false)
+
+    // Dynamic Gemini API Key & custom dynamic profiles lists
+    var geminiApiKey by mutableStateOf("")
+        private set
+
+    var profileList by mutableStateOf<List<String>>(emptyList())
+        private set
 
     // Google Sheets Sync Settings & States
     var googleSheetsUrl by mutableStateOf("")
@@ -96,6 +117,7 @@ class BYODViewModel(
 
     init {
         loadGoogleSheetsSyncSettings()
+        loadProfileSettings()
         // Automatically fetch and seed if empty, and load today's compiled data
         viewModelScope.launch {
             _currentProfile.collect { profile ->
@@ -109,12 +131,78 @@ class BYODViewModel(
         val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
         googleSheetsUrl = prefs.getString("google_sheets_url", "") ?: ""
         lastSyncTime = prefs.getString("last_sheets_sync_time", "동기화 이력 없음") ?: "동기화 이력 없음"
+        geminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
+        geminiService.customApiKey = geminiApiKey.ifBlank { null }
     }
 
     fun saveGoogleSheetsUrl(url: String) {
         googleSheetsUrl = url.trim()
         val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
         prefs.edit().putString("google_sheets_url", googleSheetsUrl).apply()
+    }
+
+    fun saveGeminiApiKey(key: String) {
+        val trimmed = key.trim()
+        geminiApiKey = trimmed
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("gemini_api_key", trimmed).apply()
+        geminiService.customApiKey = trimmed.ifBlank { null }
+        
+        viewModelScope.launch {
+            if (trimmed.isNotEmpty()) {
+                _uiEvents.emit("🔑 Gemini API Key가 성공적으로 업데이트되었습니다.")
+            } else {
+                _uiEvents.emit("🔑 Gemini API Key가 초기화되었습니다 (기본 비밀값 사용).")
+            }
+        }
+    }
+
+    private fun loadProfileSettings() {
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        val storedProfiles = prefs.getString("byod_profiles", "SHARED,ME,GIRLFRIEND") ?: "SHARED,ME,GIRLFRIEND"
+        profileList = storedProfiles.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        
+        val activeProj = prefs.getString("byod_active_profile", "SHARED") ?: "SHARED"
+        if (activeProj in profileList) {
+            _currentProfile.value = activeProj
+        } else if (profileList.isNotEmpty()) {
+            _currentProfile.value = profileList.first()
+        } else {
+            _currentProfile.value = "SHARED"
+            profileList = listOf("SHARED")
+        }
+    }
+
+    fun addProfile(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        if (profileList.contains(trimmed)) {
+            viewModelScope.launch { _uiEvents.emit("⚠️ 이미 존재하는 프로필 이름입니다.") }
+            return
+        }
+        val newList = profileList + trimmed
+        saveProfileList(newList)
+        switchProfile(trimmed)
+        viewModelScope.launch { _uiEvents.emit("✨ 새 프로필 '${trimmed}'이(가) 추가 및 활성화되었습니다.") }
+    }
+
+    fun deleteProfile(name: String) {
+        if (name == "SHARED") {
+            viewModelScope.launch { _uiEvents.emit("⚠️ 기본 공동 프로필('SHARED')은 삭제할 수 없습니다.") }
+            return
+        }
+        val newList = profileList.filter { it != name }
+        saveProfileList(newList)
+        if (_currentProfile.value == name) {
+            switchProfile("SHARED")
+        }
+        viewModelScope.launch { _uiEvents.emit("🗑️ 프로필 '${name}'이(가) 삭제되었습니다.") }
+    }
+
+    private fun saveProfileList(list: List<String>) {
+        profileList = list
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("byod_profiles", list.joinToString(",")).apply()
     }
 
     fun syncWithGoogleSheets() {
@@ -129,9 +217,10 @@ class BYODViewModel(
         viewModelScope.launch {
             isSyncing = true
             try {
+                val activeProfileStr = _currentProfile.value
                 // 1. Gather all words and chat logs from local Room DB
                 // Since passive and active might be fetched differently, let's load all words directly 
-                val currentLocalList = repository.getAllWordsFlow("SHARED").stateIn(viewModelScope).value
+                val currentLocalList = repository.getAllWordsFlow(activeProfileStr).stateIn(viewModelScope).value
                 
                 // Map words to transfer objects
                 val itemsToSync = currentLocalList.map {
@@ -148,8 +237,8 @@ class BYODViewModel(
                     )
                 }
 
-                // Gather and map all local chat logs
-                val localLogsList = repository.getAllChatLogsWithEnglish()
+                // Gather and map all local chat logs matching this profile
+                val localLogsList = repository.getAllChatLogsWithEnglish(activeProfileStr)
                 val logsToSync = localLogsList.map {
                     com.example.data.api.SheetChatLogItem(
                         targetEnglish = it.targetEnglish,
@@ -175,12 +264,12 @@ class BYODViewModel(
                             nativeExampleKr = it.nativeExampleKr,
                             status = it.status,
                             createdAt = it.createdAt,
-                            profile = "SHARED"
+                            profile = activeProfileStr
                         )
                     }
 
                     // 3. Sync and merge both words and chat logs into local database
-                    repository.syncWordsAndLogs(cloudWords, response.chatLogs ?: emptyList())
+                    repository.syncWordsAndLogs(activeProfileStr, cloudWords, response.chatLogs ?: emptyList())
                     
                     // Update sync metadata
                     val currentFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
@@ -204,19 +293,25 @@ class BYODViewModel(
     }
 
     fun switchProfile(profile: String) {
-        // Kept for backward compatibility, does nothing as we are in unified SHARED mode
+        if (profileList.contains(profile)) {
+            _currentProfile.value = profile
+            selectedCategoryForQuiz = "전체 코스"
+            val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("byod_active_profile", profile).apply()
+            viewModelScope.launch {
+                seedDefaultWordsIfEmpty(profile)
+                _uiEvents.emit("👤 프로필이 '${profile}'(으)로 변경되었습니다.")
+                refreshTodayProgress()
+            }
+        }
     }
 
     /**
      * Seeds the local pre-populated 10 words if the profile's vocabulary database is dry.
      */
     private suspend fun seedDefaultWordsIfEmpty(profile: String) {
-        val existing = repository.getPassiveWords(profile, 1)
-        val all = repository.getAllWordsFlow(profile)
-        // Check if we already have items saved
         viewModelScope.launch {
             val wordsList = repository.getPassiveWords(profile, 5)
-            val activeList = repository.getActiveWordsFlow(profile)
             if (wordsList.isEmpty()) {
                 Log.d("BYODViewModel", "Database empty for profile $profile, seeding default items...")
                 val defaultSeeds = listOf(
@@ -228,7 +323,8 @@ class BYODViewModel(
                         targetHint = "r__ ___ __",
                         nativeExample = "We are running out of gas. We need to find a gas station.",
                         nativeExampleKr = "우리는 기름이 다 떨어져 가고 있어. 주유소를 찾아야 해.",
-                        profile = profile
+                        profile = profile,
+                        category = "원어민 필수 구동사"
                     ),
                     Word(
                         itemType = "VERB",
@@ -238,7 +334,8 @@ class BYODViewModel(
                         targetHint = "c___ __ ____",
                         nativeExample = "I can't come up with a good idea for the meeting yet.",
                         nativeExampleKr = "나는 아직 회의를 위한 좋은 아이디어를 생각해낼 수 없어.",
-                        profile = profile
+                        profile = profile,
+                        category = "원어민 필수 구동사"
                     ),
                     Word(
                         itemType = "VERB",
@@ -248,7 +345,8 @@ class BYODViewModel(
                         targetHint = "g__ a____ ____",
                         nativeExample = "Are you getting along with your new roommate?",
                         nativeExampleKr = "새로운 룸메이트랑 잘 지내고 있니?",
-                        profile = profile
+                        profile = profile,
+                        category = "원어민 필수 구동사"
                     ),
                     Word(
                         itemType = "VERB",
@@ -258,7 +356,8 @@ class BYODViewModel(
                         targetHint = "l___ _______ __",
                         nativeExample = "I am looking forward to meeting you this weekend.",
                         nativeExampleKr = "나는 이번 주말에 너를 만나는 것을 고대하고 있어.",
-                        profile = profile
+                        profile = profile,
+                        category = "원어민 필수 구동사"
                     ),
                     Word(
                         itemType = "VERB",
@@ -268,7 +367,8 @@ class BYODViewModel(
                         targetHint = "p__ ___",
                         nativeExample = "You shouldn't put off your dental appointment any longer.",
                         nativeExampleKr = "더 이상 치과 예약을 미루면 안 돼.",
-                        profile = profile
+                        profile = profile,
+                        category = "원어민 필수 구동사"
                     ),
                     Word(
                         itemType = "CHUNK",
@@ -278,7 +378,8 @@ class BYODViewModel(
                         targetHint = "t___ ____ __",
                         nativeExample = "Can you take care of our dog for a bit tonight?",
                         nativeExampleKr = "오늘 밤 잠시 우리 강아지 좀 돌봐줄 수 있어?",
-                        profile = profile
+                        profile = profile,
+                        category = "기초 회화 청크"
                     ),
                     Word(
                         itemType = "VERB",
@@ -288,7 +389,8 @@ class BYODViewModel(
                         targetHint = "b____ __",
                         nativeExample = "Don't bring up that sad topic during dinner tonight.",
                         nativeExampleKr = "오늘 저녁 식사 시간에 그 슬픈 이야기를 꺼내지 마라.",
-                        profile = profile
+                        profile = profile,
+                        category = "기초 회화 청크"
                     ),
                     Word(
                         itemType = "VERB",
@@ -298,7 +400,8 @@ class BYODViewModel(
                         targetHint = "t___ ___",
                         nativeExample = "It turned out that the scary rumor was a total misunderstanding.",
                         nativeExampleKr = "그 무서운 소문은 결국 완전한 오해인 것으로 드러났어.",
-                        profile = profile
+                        profile = profile,
+                        category = "기초 회화 청크"
                     ),
                     Word(
                         itemType = "VERB",
@@ -308,7 +411,8 @@ class BYODViewModel(
                         targetHint = "b____ ____",
                         nativeExample = "My laptop suddenly broke down on my way home.",
                         nativeExampleKr = "집으로 돌아오는 길에 내 노트북이 갑자기 고장 났어.",
-                        profile = profile
+                        profile = profile,
+                        category = "기초 회화 청크"
                     ),
                     Word(
                         itemType = "CHUNK",
@@ -317,8 +421,9 @@ class BYODViewModel(
                         contextKr = "집을 외출해서 나서기 전에 불이 다 꺼졌는지 꼭 확인해.",
                         targetHint = "m___ ____",
                         nativeExample = "Make sure you turn off all the lights before leaving the house.",
-                        nativeExampleKr = "집을 나서기 전에 반드시 전등을 모두 껐는지 확인해라.",
-                        profile = profile
+                        nativeExampleKr = "집을 나서기 전에 반드시 전등을 모두 켰는지 확인해라.",
+                        profile = profile,
+                        category = "기초 회화 청크"
                     )
                 )
                 repository.insertWords(defaultSeeds)
@@ -341,9 +446,17 @@ class BYODViewModel(
      */
     fun startDailyQuiz() {
         viewModelScope.launch {
-            val passives = repository.getPassiveWords(_currentProfile.value, 10)
+            val passives = if (selectedCategoryForQuiz == "전체 코스") {
+                repository.getPassiveWords(_currentProfile.value, 10)
+            } else {
+                repository.getPassiveWordsByCategory(_currentProfile.value, selectedCategoryForQuiz, 10)
+            }
             if (passives.isEmpty()) {
-                _uiEvents.emit("학습할 단어가 없습니다. [AI 자료 추천] 탭에서 원문 텍스트를 통해 회화 표현을 추가해 주세요!")
+                if (selectedCategoryForQuiz == "전체 코스") {
+                    _uiEvents.emit("학습할 단어가 없습니다. [AI 자료 추천] 탭에서 원문 텍스트나 리서치 기능을 통해 새로운 표현을 생성해 주세요!")
+                } else {
+                    _uiEvents.emit("[$selectedCategoryForQuiz] 코스에 아직 학습 대기 중인 표현이 없습니다. [AI 자료 추천] 탭에서 해당 키워드로 리서치해 표현을 생성해 보세요!")
+                }
             } else {
                 activeQuizWords = passives
                 currentWordIndex = 0
@@ -439,8 +552,9 @@ class BYODViewModel(
     /**
      * Saves selected extracted words into the database.
      */
-    fun saveExtractedWords(selectedIndices: List<Int>) {
+    fun saveExtractedWords(selectedIndices: List<Int>, customCategory: String? = null) {
         if (extractedWordsList.isEmpty()) return
+        val finalCategory = customCategory?.trim()?.ifBlank { null } ?: "일용용 추출"
         viewModelScope.launch {
             val wordsToSave = selectedIndices.map { index ->
                 val item = extractedWordsList[index]
@@ -453,13 +567,56 @@ class BYODViewModel(
                     nativeExample = item.nativeExample,
                     nativeExampleKr = item.nativeExampleKr,
                     status = "PASSIVE",
-                    profile = _currentProfile.value
+                    profile = _currentProfile.value,
+                    category = finalCategory
                 )
             }
             repository.insertWords(wordsToSave)
-            _uiEvents.emit("${wordsToSave.size}개의 퀴즈 학습자료가 성공적으로 DB에 등록되었습니다!")
+            _uiEvents.emit("✨ [${finalCategory}] 코스에 ${wordsToSave.size}개의 핵심 표현이 등록되었습니다!")
             extractedWordsList = emptyList()
             extractionInputText = ""
+            researchTopicInput = ""
+        }
+    }
+
+    /**
+     * Research a conversation topic or situational keyword using Gemini AI
+     */
+    fun researchTopicExpressions() {
+        val topic = researchTopicInput.trim()
+        if (topic.isEmpty()) {
+            viewModelScope.launch {
+                _uiEvents.emit("학습하고 싶은 주제나 상황 키워드를 입력해 주세요!")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            isResearching = true
+            try {
+                if (!geminiService.hasValidApiKey()) {
+                    _uiEvents.emit("API_KEY_REQUIRED")
+                    isResearching = false
+                    return@launch
+                }
+                
+                val result = geminiService.researchTopicExpressions(topic)
+                if (result.isEmpty()) {
+                    _uiEvents.emit("해당 주제에 적합한 영어 회화 표현 추출에 실패했습니다. 다른 키워드로 검색해 보세요.")
+                } else {
+                    extractedWordsList = result
+                    _uiEvents.emit("🔍 '$topic' 주제 완벽 분석! 실용 표현 ${result.size}개를 엄선해 연계 스키마를 구성했습니다.")
+                }
+            } catch (e: Exception) {
+                Log.e("BYODViewModel", "Research topic error", e)
+                if (e.message == "API_KEY_MISSING") {
+                    _uiEvents.emit("API_KEY_REQUIRED")
+                } else {
+                    _uiEvents.emit("AI 리서치 중 오류가 발생했습니다: ${e.message}")
+                }
+            } finally {
+                isResearching = false
+            }
         }
     }
 

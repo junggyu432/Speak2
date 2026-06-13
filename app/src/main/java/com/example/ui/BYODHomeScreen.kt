@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,12 +51,13 @@ fun BYODHomeScreen(
     val activeWords by viewModel.activeWords.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableStateOf(0) } // 0: Quiz, 1: AI Extractions, 2: Monthly Report, 3: Wordbook
     var showSyncDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     // Listen to UI events for toast notifications
     LaunchedEffect(key1 = true) {
         viewModel.uiEvents.collect { event ->
             if (event == "API_KEY_REQUIRED") {
-                Toast.makeText(context, "⚠️ Gemini API Key가 설정되지 않았습니다.\nAI Studio의 Secrets 패널에서 GEMINI_API_KEY를 등록해 주세요!", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "⚠️ Gemini API Key가 설정되지 않았습니다.\n우측 상단 설정 아이콘(⚙️)을 눌러 직접 Key를 입력해 주세요!", Toast.LENGTH_LONG).show()
             } else {
                 Toast.makeText(context, event, Toast.LENGTH_LONG).show()
             }
@@ -328,6 +330,212 @@ fun BYODHomeScreen(
         )
     }
 
+    if (showSettingsDialog) {
+        var keyInput by remember { mutableStateOf(viewModel.geminiApiKey) }
+        var newProfileNameInput by remember { mutableStateOf("") }
+        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "환경설정",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("설정 및 프로필 관리")
+                }
+            },
+            shape = RoundedCornerShape(26.dp),
+            text = {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // API Key Settings
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "🔑 Gemini API Key 설정",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "개인 Gemini API Key를 입력하여 독립 환경에서도 튜터가 원활히 작동하게 합니다.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = keyInput,
+                                    onValueChange = { keyInput = it },
+                                    label = { Text("Gemini API Key") },
+                                    placeholder = { Text("AIzaSy...") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        viewModel.saveGeminiApiKey(keyInput)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("Key 저장", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // Profile switching and list
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "👤 프로필 변경 및 추가",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "프로필을 추가/전환하여 각기 다른 학습 목록을 분리 보관하세요.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                Text(
+                                    "현재 활성 프로필: ${when(currentProfile) {
+                                        "SHARED" -> "공동 (SHARED)"
+                                        "ME" -> "본인 (ME)"
+                                        "GIRLFRIEND" -> "여자친구 (GIRLFRIEND)"
+                                        else -> currentProfile
+                                    }}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Profile Chips
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    viewModel.profileList.forEach { profile ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (profile == currentProfile) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                    else Color.Transparent
+                                                )
+                                                .clickable {
+                                                    viewModel.switchProfile(profile)
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = if (profile == currentProfile) Icons.Filled.Check else Icons.Filled.Person,
+                                                    contentDescription = null,
+                                                    tint = if (profile == currentProfile) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = when(profile) {
+                                                        "SHARED" -> "공동 (SHARED)"
+                                                        "ME" -> "본인 (ME)"
+                                                        "GIRLFRIEND" -> "여자친구 (GIRLFRIEND)"
+                                                        else -> profile
+                                                    },
+                                                    fontSize = 13.sp,
+                                                    color = if (profile == currentProfile) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                            
+                                            if (profile != "SHARED" && profile != "ME" && profile != "GIRLFRIEND") {
+                                                IconButton(
+                                                    onClick = {
+                                                        viewModel.deleteProfile(profile)
+                                                    },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "프로필 삭제",
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedTextField(
+                                    value = newProfileNameInput,
+                                    onValueChange = { newProfileNameInput = it },
+                                    label = { Text("새 프로필 이름") },
+                                    placeholder = { Text("예: 철수") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        if (newProfileNameInput.isNotBlank()) {
+                                            viewModel.addProfile(newProfileNameInput)
+                                            newProfileNameInput = ""
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("프로필 추가", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showSettingsDialog = false },
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("닫기")
+                }
+            }
+        )
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -352,7 +560,7 @@ fun BYODHomeScreen(
                             )
                         }
 
-                        // Beautiful Row with Google Sheets Sync Trigger button
+                        // Beautiful Row with Google Sheets Sync Trigger and Settings buttons
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -377,6 +585,20 @@ fun BYODHomeScreen(
                                         contentDescription = "구글 시트 동기화 설정"
                                     )
                                 }
+                            }
+
+                            FilledTonalIconButton(
+                                onClick = { showSettingsDialog = true },
+                                modifier = Modifier.testTag("open_settings_dialog_button"),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = if (viewModel.geminiApiKey.isNotEmpty()) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (viewModel.geminiApiKey.isNotEmpty()) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = "환경설정 및 프로필 관리"
+                                )
                             }
                         }
                     }
@@ -509,10 +731,16 @@ fun QuizTabScreen(viewModel: BYODViewModel) {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "프로필: ${if (activeProfile == "ME") "본인" else "여자친구"}",
+                            "프로필: ${when(activeProfile) {
+                                "SHARED" -> "공동 (SHARED)"
+                                "ME" -> "본인"
+                                "GIRLFRIEND" -> "여자친구"
+                                else -> activeProfile
+                            }}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("active_profile_indicator")
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -523,6 +751,53 @@ fun QuizTabScreen(viewModel: BYODViewModel) {
                         lineHeight = 17.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+        }
+
+        item {
+            val categories by viewModel.distinctCategories.collectAsStateWithLifecycle()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = "📚 단어 기반 체계적 학습 코스 선택",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categories) { category ->
+                        val isSelected = viewModel.selectedCategoryForQuiz == category
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    viewModel.selectedCategoryForQuiz = category
+                                    viewModel.resetQuiz()
+                                },
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = category,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -624,7 +899,7 @@ fun QuizTabScreen(viewModel: BYODViewModel) {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "유형: ${currentWord.itemType}",
+                            text = "코스: ${currentWord.category} | 유형: ${currentWord.itemType}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -911,8 +1186,10 @@ fun QuizTabScreen(viewModel: BYODViewModel) {
 @Composable
 fun AIExtractorTabScreen(viewModel: BYODViewModel) {
     val isExtracting = viewModel.isExtracting
+    val isResearching = viewModel.isResearching
     val extractedList = viewModel.extractedWordsList
     var selectedItemIndices = remember { mutableStateListOf<Int>() }
+    var aiMode by remember { mutableStateOf(1) } // Default to 1 (Topic Research) as requested by user!
 
     // Synchronize selection state when list changes
     LaunchedEffect(extractedList) {
@@ -930,71 +1207,201 @@ fun AIExtractorTabScreen(viewModel: BYODViewModel) {
         verticalArrangement = Arrangement.Top
     ) {
         item {
+            // Mode Toggle Card (Vibrant High-Contrast Segmented design)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 ),
-                shape = RoundedCornerShape(24.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "🎬 외부 텍스트에서 AI 구동사/청크 자동 추출",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        "유튜브 자막, 트위터/X 피드, 드라마 대사, 좋아하는 뉴스 아티클 원문을 아래 붙여넣어 보세요.\n" +
-                        "Gemini AI가 가장 빈번하고 실용적인 핵심 표현 5개를 엄선해 퀴즈 카드로 가공해 줍니다.",
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (aiMode == 1) MaterialTheme.colorScheme.primary else Color.Transparent)
+                            .clickable { 
+                                aiMode = 1 
+                                viewModel.researchTopicInput = ""
+                            }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "AI 주제별 리서치 (코스)",
+                            color = if (aiMode == 1) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (aiMode == 0) MaterialTheme.colorScheme.primary else Color.Transparent)
+                            .clickable { 
+                                aiMode = 0 
+                                viewModel.extractionInputText = ""
+                            }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "파일 & 원문 텍스트 추출",
+                            color = if (aiMode == 0) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
 
-        item {
-            OutlinedTextField(
-                value = viewModel.extractionInputText,
-                onValueChange = { viewModel.extractionInputText = it },
-                label = { Text("여기에 소스 영어 원문 텍스트를 붙여넣으세요") },
-                placeholder = { Text("예: Oh, we are running out of time! I can't come up with a good idea. Oh, by the way...") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(130.dp),
-                shape = RoundedCornerShape(24.dp),
-                maxLines = 6
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Button(
-                onClick = { viewModel.extractWordsFromInput() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .testTag("extract_ai_button"),
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.tertiary
-                ),
-                enabled = !isExtracting
-            ) {
-                if (isExtracting) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Gemini가 유용한 생활 회화 선별 중...")
-                } else {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI 영어 표현 5개 추출하기", fontWeight = FontWeight.Bold)
+        if (aiMode == 1) {
+            // MODE 1: Topic Research Panel
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    ),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "🔍 AI 맞춤형 상황 분석 및 교과 코스 생성",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "공항 수하물 분실 대처, 바이어 응대 식사, 스타벅스 복잡한 시럽 추가 주문 등 원하는 상황 키워드를 검색해 보세요.\n" +
+                            "Gemini AI가 가장 빈번한 실용 영어 회화 데이터셋 5개를 입체적으로 가공해 즉석 코스로 제공합니다.",
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+
+            item {
+                OutlinedTextField(
+                    value = viewModel.researchTopicInput,
+                    onValueChange = { viewModel.researchTopicInput = it },
+                    label = { Text("학습하고 싶은 입체적인 상황/주제 키워드를 입력하세요") },
+                    placeholder = { Text("예: 스타벅스 주문하기, 공항 입국심사, 전화 호텔 예약") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    singleLine = true
+                )
+
+                Button(
+                    onClick = { viewModel.researchTopicExpressions() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .testTag("research_ai_button"),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    ),
+                    enabled = !isResearching
+                ) {
+                    if (isResearching) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("주제 연구 및 회화 연계 설계 중...")
+                    } else {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("체계적인 AI 맞춤 코스 만들기", fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+        } else {
+            // MODE 0: Raw Text Extraction Panel
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                    ),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "🎬 외부 텍스트에서 AI 구동사/청크 자동 추출",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "유튜브 자막, 트위터/X 피드, 드라마 대사, 좋아하는 뉴스 아티클 원문을 아래 붙여넣어 보세요.\n" +
+                            "Gemini AI가 가장 빈번하고 실용적인 핵심 표현 5개를 엄선해 퀴즈 카드로 가공해 줍니다.",
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            item {
+                OutlinedTextField(
+                    value = viewModel.extractionInputText,
+                    onValueChange = { viewModel.extractionInputText = it },
+                    label = { Text("여기에 소스 영어 원문 텍스트를 붙여넣으세요") },
+                    placeholder = { Text("예: Oh, we are running out of time! I can't come up with a good idea. Oh, by the way...") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    maxLines = 6
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Button(
+                    onClick = { viewModel.extractWordsFromInput() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .testTag("extract_ai_button"),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    ),
+                    enabled = !isExtracting
+                ) {
+                    if (isExtracting) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Gemini가 유용한 생활 회화 선별 중...")
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("AI 영어 표현 5개 추출하기", fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
         }
 
         if (extractedList.isNotEmpty()) {
@@ -1005,7 +1412,7 @@ fun AIExtractorTabScreen(viewModel: BYODViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "📋 추출된 생활 밀착 표현 후보",
+                        text = "📋 추출/리서치 완료된 맞춤 표현 후보",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
@@ -1101,7 +1508,14 @@ fun AIExtractorTabScreen(viewModel: BYODViewModel) {
             item {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
-                    onClick = { viewModel.saveExtractedWords(selectedItemIndices.toList()) },
+                    onClick = {
+                        val categoryName = if (aiMode == 1) {
+                            viewModel.researchTopicInput.trim().ifEmpty { "추출 회화" }
+                        } else {
+                            "추출 회화"
+                        }
+                        viewModel.saveExtractedWords(selectedItemIndices.toList(), categoryName)
+                    },
                     enabled = selectedItemIndices.isNotEmpty(),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1572,12 +1986,15 @@ fun MarkdownTextRenderer(reportText: String) {
 fun WordbookTabScreen(viewModel: BYODViewModel) {
     val currentProfile by viewModel.currentProfile.collectAsStateWithLifecycle()
     val wordsList by viewModel.allWords.collectAsStateWithLifecycle()
+    val categoriesList by viewModel.distinctCategories.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var selectedFilterCategory by remember { mutableStateOf("전체 코스") }
 
     // Dialog form states
     var newEng by remember { mutableStateOf("") }
     var newMean by remember { mutableStateOf("") }
+    var newCategory by remember { mutableStateOf("나만의 회화") }
     var newContext by remember { mutableStateOf("") }
     var newHint by remember { mutableStateOf("") }
     var newExample by remember { mutableStateOf("") }
@@ -1621,6 +2038,16 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
                             value = newMean,
                             onValueChange = { newMean = it },
                             label = { Text("한국어 뜻 (예: 해내다, 성공시키다)") },
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = newCategory,
+                            onValueChange = { newCategory = it },
+                            label = { Text("코스/주제 이름 (예: 일반 회화, 비즈니스, 스타벅스)") },
+                            placeholder = { Text("예: 나만의 회화, 유니크 패턴 등") },
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -1682,13 +2109,15 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
                                 nativeExample = newExample.trim().ifEmpty { "Let's practice this useful pattern together." },
                                 nativeExampleKr = newExampleKr.trim().ifEmpty { "이 유용한 패턴을 우리 함께 연습해 봅시다." },
                                 status = "PASSIVE",
-                                profile = currentProfile
+                                profile = currentProfile,
+                                category = newCategory.trim().ifEmpty { "나만의 회화" }
                             )
                             viewModel.addManualWord(newWord)
                             
                             // reset and dismiss
                             newEng = ""
                             newMean = ""
+                            newCategory = "나만의 회화"
                             newContext = ""
                             newHint = ""
                             newExample = ""
@@ -1735,7 +2164,12 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "현재 프로필 (${if (currentProfile == "ME") "본인" else "여자친구"})에 수록된 회화 단어들을 한눈에 보며 관리합니다. 학습 상태도 수동 조율 및 불필요한 단어 삭제가 0ms로 가능합니다.",
+                        "현재 프로필 (${when(currentProfile) {
+                            "SHARED" -> "공동 (SHARED)"
+                            "ME" -> "본인"
+                            "GIRLFRIEND" -> "여자친구"
+                            else -> currentProfile
+                        }})에 수록된 회화 단어들을 한눈에 보며 관리합니다. 학습 상태도 수동 조율 및 불필요한 단어 삭제가 0ms로 가능합니다.",
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1769,7 +2203,56 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
             }
         }
 
-        if (wordsList.isEmpty()) {
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp, horizontal = 4.dp)
+            ) {
+                Text(
+                    text = "📂 코스(주제)별 분류 보기",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categoriesList) { category ->
+                        val isSelected = selectedFilterCategory == category
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { selectedFilterCategory = category },
+                            color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = category,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        val filteredWords = if (selectedFilterCategory == "전체 코스") {
+            wordsList
+        } else {
+            wordsList.filter { it.category == selectedFilterCategory }
+        }
+
+        if (filteredWords.isEmpty()) {
             item {
                 Spacer(modifier = Modifier.height(48.dp))
                 Icon(
@@ -1780,21 +2263,21 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "단어장이 텅 비어 있습니다.",
+                    text = "이 코스에 등록된 표현이 없습니다.",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "기본단어 10개가 표시되지 않으면 프로필을 다시 탭하시거나\n[AI 자료 제안] 탭에서 원본 대사를 넣어 추가해 주세요.",
+                    text = "신규 표현을 단어장에 추가하시거나\n[AI 맞춤 코스] 탭에서 리서치를 통해 학습 코스를 자동 증강해 보세요.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
         } else {
-            items(wordsList) { word ->
+            items(filteredWords) { word ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1819,6 +2302,12 @@ fun WordbookTabScreen(viewModel: BYODViewModel) {
                                     modifier = Modifier.height(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
+                                SuggestionChip(
+                                    onClick = {},
+                                    label = { Text(word.category, fontSize = 10.sp) },
+                                    modifier = Modifier.height(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = word.targetEnglish,
                                     fontSize = 16.sp,

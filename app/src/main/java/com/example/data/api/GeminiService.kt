@@ -9,8 +9,13 @@ import kotlinx.coroutines.withContext
 class GeminiService {
 
     private val apiService = GeminiClient.apiService
+    var customApiKey: String? = null
 
     private fun getApiKey(): String {
+        val apiKeyFromPrefs = customApiKey
+        if (!apiKeyFromPrefs.isNullOrBlank()) {
+            return apiKeyFromPrefs
+        }
         val key = BuildConfig.GEMINI_API_KEY
         return if (key == "MY_GEMINI_API_KEY" || key.isBlank()) {
             ""
@@ -77,6 +82,60 @@ class GeminiService {
             GeminiClient.parseGeneratedWords(resultText)
         } catch (e: Exception) {
             Log.e("GeminiService", "Failed to extract learning materials", e)
+            throw e
+        }
+    }
+
+    /**
+     * Topic Research: Searches and prepares up to 5 super practical, native expressions (VERB or CHUNK) based on any keyword or topic.
+     */
+    suspend fun researchTopicExpressions(topic: String): List<GeneratedWordItem> = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        if (apiKey.isEmpty()) {
+            throw IllegalStateException("API_KEY_MISSING")
+        }
+
+        val systemInstruction = """
+            Role: 일상/비즈니스 실전 비대면 회화 1:1 러닝 디자이너
+            Task: 사용자가 학습하고 싶어하는 영어 회화 주제(상황, 장소, 목적 등)인 '$topic'을 정밀 타겟팅하여, 원어민들이 해당 상황에서 입에 달고 사는 핵심 구동사(VERB) 및 실용적 패턴 청크(CHUNK)를 최대 5개 선정 및 가공하라.
+            
+            [콘텐츠 가이드라인]
+            1. 사용자가 단회성 통암기가 아닌 필수 일상 단어 조합으로 유연하게 발화할 수 있도록 설계할 것.
+            2. context_kr(한국어 상황 맥락)은 해당 단어/패턴이 정확히 사용되는 상황극이나 감정 상태를 쉬운 한국어로 제시할 것.
+            3. target_hint(힌트 포맷)는 첫 글자 외에는 공백 여부를 보존한 채 언더바(_)로 마스킹할 것. 예: 'get away with' -> 'g__ ____ ____'.
+            4. 반드시 지정된 JSON 포맷으로 출력하고 다른 부연 설명은 일절 배제할 것.
+
+            [출력 JSON 스키마 가이드]
+            {
+              "generated_words": [
+                {
+                  "item_type": "VERB 또는 CHUNK",
+                  "target_english": "영어 표현",
+                  "target_meaning": "명확한 한국어 뜻",
+                  "context_kr": "말을 뱉게 환경을 잡아주는 한글 상황 문장",
+                  "target_hint": "각 영어 단어별 첫자리 제외 마스킹 힌트",
+                  "native_example": "대표 예시 문장",
+                  "native_example_kr": "예시 영어 문장 한글 번역"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val prompt = "주제: $topic\n이 상황에 대비하기 위해 꼭 입 밖으로 뱉어야 하는 고빈도 단어/청크 5개와 훈련 스키마를 도출해 줘."
+
+        val request = GenerateContentRequest(
+            contents = listOf(Content(parts = listOf(Part(text = prompt)))),
+            generationConfig = GenerationConfig(responseMimeType = "application/json", temperature = 0.3f),
+            systemInstruction = Content(parts = listOf(Part(text = systemInstruction)))
+        )
+
+        try {
+            val response = apiService.generateContent(apiKey, request)
+            val resultText = GeminiClient.extractText(response) ?: ""
+            Log.d("GeminiService", "Researched topic JSON text: $resultText")
+            GeminiClient.parseGeneratedWords(resultText)
+        } catch (e: Exception) {
+            Log.e("GeminiService", "Failed to research topic materials", e)
             throw e
         }
     }

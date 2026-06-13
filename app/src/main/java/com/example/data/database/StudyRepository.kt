@@ -13,6 +13,12 @@ class StudyRepository(private val wordDao: WordDao) {
         return wordDao.getPassiveWords(profile, limit)
     }
 
+    suspend fun getPassiveWordsByCategory(profile: String, category: String, limit: Int = 10): List<Word> {
+        return wordDao.getPassiveWordsByCategory(profile, category, limit)
+    }
+
+    fun getDistinctCategoriesFlow(profile: String): Flow<List<String>> = wordDao.getDistinctCategoriesFlow(profile)
+
     suspend fun insertWord(word: Word): Long {
         return wordDao.insertWord(word)
     }
@@ -67,11 +73,12 @@ class StudyRepository(private val wordDao: WordDao) {
         wordDao.updateReportCopiedStatus(reportId, if (isCopied) 1 else 0)
     }
 
-    suspend fun getAllChatLogsWithEnglish(): List<ChatLogWithEnglish> {
-        return wordDao.getAllChatLogsWithEnglish()
+    suspend fun getAllChatLogsWithEnglish(profile: String): List<ChatLogWithEnglish> {
+        return wordDao.getAllChatLogsWithEnglish(profile)
     }
 
     suspend fun syncWordsAndLogs(
+        profile: String,
         cloudWords: List<Word>,
         cloudLogs: List<com.example.data.api.SheetChatLogItem>
     ) {
@@ -90,7 +97,7 @@ class StudyRepository(private val wordDao: WordDao) {
 
         // 2. Sync chat logs
         cloudLogs.forEach { logItem ->
-            val word = wordDao.getWordByEnglish(logItem.targetEnglish, "SHARED")
+            val word = wordDao.getWordByEnglish(logItem.targetEnglish, profile)
             if (word != null) {
                 val existingLog = wordDao.getChatLogBySentence(word.id, logItem.userTypedSentence)
                 if (existingLog == null) {
