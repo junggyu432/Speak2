@@ -111,6 +111,11 @@ class BYODViewModel(
     var isGeneratingReport by mutableStateOf(false)
     var generatedReportForToday by mutableStateOf<DailyReport?>(null)
 
+    // Customizable Prompt States
+    var customExtractionPrompt by mutableStateOf("")
+    var customResearchPrompt by mutableStateOf("")
+    var customReportPrompt by mutableStateOf("")
+
     // General Info and Messages
     private val _uiEvents = MutableSharedFlow<String>()
     val uiEvents: SharedFlow<String> = _uiEvents.asSharedFlow()
@@ -133,6 +138,15 @@ class BYODViewModel(
         lastSyncTime = prefs.getString("last_sheets_sync_time", "동기화 이력 없음") ?: "동기화 이력 없음"
         geminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
         geminiService.customApiKey = geminiApiKey.ifBlank { null }
+
+        customExtractionPrompt = prefs.getString("custom_extraction_prompt", "") ?: ""
+        geminiService.customExtractionPrompt = if (customExtractionPrompt.isBlank()) null else customExtractionPrompt
+
+        customResearchPrompt = prefs.getString("custom_research_prompt", "") ?: ""
+        geminiService.customResearchPrompt = if (customResearchPrompt.isBlank()) null else customResearchPrompt
+
+        customReportPrompt = prefs.getString("custom_report_prompt", "") ?: ""
+        geminiService.customReportPrompt = if (customReportPrompt.isBlank()) null else customReportPrompt
     }
 
     fun saveGoogleSheetsUrl(url: String) {
@@ -154,6 +168,39 @@ class BYODViewModel(
             } else {
                 _uiEvents.emit("🔑 Gemini API Key가 초기화되었습니다 (기본 비밀값 사용).")
             }
+        }
+    }
+
+    fun saveCustomExtractionPrompt(prompt: String) {
+        val trimmed = prompt.trim()
+        customExtractionPrompt = trimmed
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_extraction_prompt", trimmed).apply()
+        geminiService.customExtractionPrompt = if (trimmed.isBlank()) null else trimmed
+        viewModelScope.launch {
+            _uiEvents.emit("📝 AI 표현 추출 프롬프트가 업데이트되었습니다.")
+        }
+    }
+
+    fun saveCustomResearchPrompt(prompt: String) {
+        val trimmed = prompt.trim()
+        customResearchPrompt = trimmed
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_research_prompt", trimmed).apply()
+        geminiService.customResearchPrompt = if (trimmed.isBlank()) null else trimmed
+        viewModelScope.launch {
+            _uiEvents.emit("📝 AI 주제별 리서치 프롬프트가 업데이트되었습니다.")
+        }
+    }
+
+    fun saveCustomReportPrompt(prompt: String) {
+        val trimmed = prompt.trim()
+        customReportPrompt = trimmed
+        val prefs = context.getSharedPreferences("byod_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_report_prompt", trimmed).apply()
+        geminiService.customReportPrompt = if (trimmed.isBlank()) null else trimmed
+        viewModelScope.launch {
+            _uiEvents.emit("📝 일일 보고서 및 보이스 프롬프트가 업데이트되었습니다.")
         }
     }
 
@@ -538,7 +585,8 @@ class BYODViewModel(
                 }
             } catch (e: Exception) {
                 Log.e("BYODViewModel", "Extraction error", e)
-                if (e.message == "API_KEY_MISSING") {
+                val isApiKeyError = e is retrofit2.HttpException && (e.code() == 400 || e.code() == 403)
+                if (e.message == "API_KEY_MISSING" || isApiKeyError) {
                     _uiEvents.emit("API_KEY_REQUIRED")
                 } else {
                     _uiEvents.emit("AI 분석 중 네트워크 오류가 발생했습니다: ${e.message}")
@@ -609,7 +657,8 @@ class BYODViewModel(
                 }
             } catch (e: Exception) {
                 Log.e("BYODViewModel", "Research topic error", e)
-                if (e.message == "API_KEY_MISSING") {
+                val isApiKeyError = e is retrofit2.HttpException && (e.code() == 400 || e.code() == 403)
+                if (e.message == "API_KEY_MISSING" || isApiKeyError) {
                     _uiEvents.emit("API_KEY_REQUIRED")
                 } else {
                     _uiEvents.emit("AI 리서치 중 오류가 발생했습니다: ${e.message}")
@@ -663,7 +712,8 @@ class BYODViewModel(
                 _uiEvents.emit("AI 종합 일일 보고서가 생성되었습니다!")
             } catch (e: Exception) {
                 Log.e("BYODViewModel", "Report Generation error", e)
-                if (e.message == "API_KEY_MISSING") {
+                val isApiKeyError = e is retrofit2.HttpException && (e.code() == 400 || e.code() == 403)
+                if (e.message == "API_KEY_MISSING" || isApiKeyError) {
                     _uiEvents.emit("API_KEY_REQUIRED")
                 } else {
                     _uiEvents.emit("보고서 생성 실패: ${e.message}")

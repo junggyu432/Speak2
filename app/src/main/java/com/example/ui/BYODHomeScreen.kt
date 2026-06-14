@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -52,12 +53,14 @@ fun BYODHomeScreen(
     var selectedTab by remember { mutableStateOf(0) } // 0: Quiz, 1: AI Extractions, 2: Monthly Report, 3: Wordbook
     var showSyncDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showPromptEditorDialog by remember { mutableStateOf(false) }
 
     // Listen to UI events for toast notifications
     LaunchedEffect(key1 = true) {
         viewModel.uiEvents.collect { event ->
             if (event == "API_KEY_REQUIRED") {
-                Toast.makeText(context, "⚠️ Gemini API Key가 설정되지 않았습니다.\n우측 상단 설정 아이콘(⚙️)을 눌러 직접 Key를 입력해 주세요!", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "⚠️ Gemini API Key가 설정되지 않았거나 만료되었습니다.\n안전한 개인 API Key를 입력해 주세요!", Toast.LENGTH_LONG).show()
+                showSettingsDialog = true
             } else {
                 Toast.makeText(context, event, Toast.LENGTH_LONG).show()
             }
@@ -523,6 +526,52 @@ fun BYODHomeScreen(
                             }
                         }
                     }
+
+                    // Prompt customization card
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.15f)
+                            ),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "✨ AI 시스템 지시어(프롬프트) 커스텀",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "표현 선별, 상황 리서치, 마감 보고서 작성을 제어하는 Gemini AI의 지시 프롬프트를 원격 업데이트 없이 원하시는 대로 직접 수정하고 튜닝해 보세요.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 15.sp
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        showPromptEditorDialog = true
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiary
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("프롬프트 상세 설정 & 편집", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -531,6 +580,185 @@ fun BYODHomeScreen(
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Text("닫기")
+                }
+            }
+        )
+    }
+
+    if (showPromptEditorDialog) {
+        var selectedPromptType by remember { mutableStateOf(0) } // 0: Extraction, 1: Research, 2: Report
+        
+        var extractionText by remember { 
+            mutableStateOf(
+                viewModel.customExtractionPrompt.ifBlank { com.example.data.api.GeminiService.DEFAULT_EXTRACTION_PROMPT }
+            ) 
+        }
+        var researchText by remember { 
+            mutableStateOf(
+                viewModel.customResearchPrompt.ifBlank { com.example.data.api.GeminiService.DEFAULT_RESEARCH_PROMPT }
+            ) 
+        }
+        var reportText by remember { 
+            mutableStateOf(
+                viewModel.customReportPrompt.ifBlank { com.example.data.api.GeminiService.DEFAULT_REPORT_PROMPT }
+            ) 
+        }
+
+        AlertDialog(
+            onDismissRequest = { showPromptEditorDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "프롬프트 편집",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("AI 시스템 프롬프트 관리", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            shape = RoundedCornerShape(26.dp),
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "학습에 필요한 다양한 동작을 지배하는 AI 지시어를 직접 세부조정할 수 있습니다.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Prompt Selector Switch (TabRow-like Segmented Row)
+                    ScrollableTabRow(
+                        selectedTabIndex = selectedPromptType,
+                        edgePadding = 0.dp,
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Tab(
+                            selected = selectedPromptType == 0,
+                            onClick = { selectedPromptType = 0 },
+                            text = { Text("표현 추출", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedPromptType == 1,
+                            onClick = { selectedPromptType = 1 },
+                            text = { Text("상황 리서치", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedPromptType == 2,
+                            onClick = { selectedPromptType = 2 },
+                            text = { Text("일일 보고서", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    var currentText by remember { mutableStateOf("") }
+                    var helpText by remember { mutableStateOf("") }
+                    var defaultVal by remember { mutableStateOf("") }
+
+                    // Sync local visual UI states with tab transitions
+                    LaunchedEffect(selectedPromptType, extractionText, researchText, reportText) {
+                        when (selectedPromptType) {
+                            0 -> {
+                                currentText = extractionText
+                                helpText = "유튜브 자막 등 영어 원텍스트로부터 자연스러운 기초 동사/청크 표현 5개와 훈련 스키마를 정밀 복원해 주는 지시어입니다. 반드시 JSON 가이드 형식 출력을 준수해야 합니다."
+                                defaultVal = com.example.data.api.GeminiService.DEFAULT_EXTRACTION_PROMPT
+                            }
+                            1 -> {
+                                currentText = researchText
+                                helpText = "유저 상황 키워드에 맞춰 생활 밀착 구동사 및 필수 표현들을 설계해 수록용 코스를 구성해 주는 지시어입니다. {topic} 변수 자리에 유저 장소/맥락이 들어갑니다."
+                                defaultVal = com.example.data.api.GeminiService.DEFAULT_RESEARCH_PROMPT
+                            }
+                            else -> {
+                                currentText = reportText
+                                helpText = "오늘 학습 뉘앙스 작문 피드백과 함께 구글 공식 Gemini 앱 보이스 회화(Gemini Live) 연계 개시용 영어 프롬프트를 일목요연하게 제조하는 지시어입니다."
+                                defaultVal = com.example.data.api.GeminiService.DEFAULT_REPORT_PROMPT
+                            }
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = helpText,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+
+                        OutlinedTextField(
+                            value = currentText,
+                            onValueChange = { newValue ->
+                                currentText = newValue
+                                when (selectedPromptType) {
+                                    0 -> extractionText = newValue
+                                    1 -> researchText = newValue
+                                    2 -> reportText = newValue
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            textStyle = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                            maxLines = 15
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TextButton(
+                            onClick = {
+                                when (selectedPromptType) {
+                                    0 -> {
+                                        extractionText = defaultVal
+                                        currentText = defaultVal
+                                    }
+                                    1 -> {
+                                        researchText = defaultVal
+                                        currentText = defaultVal
+                                    }
+                                    2 -> {
+                                        reportText = defaultVal
+                                        currentText = defaultVal
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("기본값 복원", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                when (selectedPromptType) {
+                                    0 -> viewModel.saveCustomExtractionPrompt(extractionText)
+                                    1 -> viewModel.saveCustomResearchPrompt(researchText)
+                                    2 -> viewModel.saveCustomReportPrompt(reportText)
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("이 프롬프트 저장", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(
+                    onClick = { showPromptEditorDialog = false }
+                ) {
+                    Text("닫기", fontWeight = FontWeight.Bold)
                 }
             }
         )
